@@ -10,16 +10,15 @@
 #include <cstring>
 #include <time.h>
 #include <getopt.h>
-#include "SparkFunSX1509.h"
-#include "7seg_bp_ada.h"
+#include "SparkFunSX1509.h"  //i2c i/o extender
+#include "7seg_bp_ada.h"     //adafruit backback 7seg 4 digit display
 #include "wiringPi.h"
-#include "sharedmem.h"
+#include "sharedmem.h"       //shared memory map
 #include "alarmclk.h"
+#include "clparms.h"
 
 int ReadThumbwheel(SX1509 io, char thumbdigits[]);
-
 const unsigned char SX1509_ADDRESS = 0x3E;  // SX1509 I2C address for thumbwheel switch
-unsigned char byte1,byte2,byte3,byte4;
 int rc;
 time_t rawtime;
 struct tm *info;  
@@ -31,18 +30,12 @@ int status;  //used in waitPID call
 bool bToggle = false;
 long AmbientLight;
 pid_t result;
-int clflag24H = 0;  //command line format 12h/24h
-int clvolume = 0;  //command line volume
-char cltune[80] = "";
-int clihiddenalarm=-1;
-int tfnd = 0;
-int opt;
-char tmp[10];
+char tmp[5];  //compose message for LED
 char tunefullpath[160];  //holding place for full path to tune
 
 int main(int argc, char** argv)
 {
-	if (wiringPiSetup () < 0) {
+	if (wiringPiSetup () < 0) {  //set up libraries
 		fprintf (stderr, "Unable to setup wiringPi: %s\n", strerror (errno));
 		return 1;
 	}
@@ -53,44 +46,44 @@ int main(int argc, char** argv)
 		return 1;
 	}
 	
-	for(int i=0;i<15;i++){
+	for(int i=0;i<15;i++){  //set up IO expander 15 inputs with pullups, one active low output
 	io.pinMode(i, INPUT_PULLUP);
 	}  
  	io.pinMode(15, OUTPUT);  //alarm armed LED
  	
 	//parse command line args
-    while ((opt = getopt(argc, argv, "fv:h:")) != -1) {
+    while ((opt = getopt(argc, argv, "f:v:h:e")) != -1) {
         switch (opt) {
-        case 'f':  //24H format
-            clflag24H = 1;
+        case 'f':  //24H format if flag found
+            clflag24H = atoi(optarg);
+            if (clflag24H != 12)clflag24H = 24;
+            ffnd = 1;
             break;
-        case 'v': //volume 
+        case 'v': //volume -6000 to 0
             clvolume = atoi(optarg);
-            tfnd = 1;
+            vfnd = 1;
             break;
-       case 'h': //hidden alarm as 0600
+       case 'h': //hidden alarm time 0600 for example
             clihiddenalarm = atoi(optarg);
+			hfnd = 1;
             break;            
-            
+       case 'e':  //for consistency with testshm
+			clExitflg = 1;
+			break;
         default: /* '?' */
-            fprintf(stderr, "Usage: %s [-f] [-v nnn] [e]\n",
-                    argv[0]);
+            fprintf(stderr, "Usage: [-h nnnn] [-f12/24] [-v -nnn] [-e] [tune]\n");
             exit(EXIT_FAILURE);
 		}
-		if (optind >= argc) {
-			fprintf(stderr, "playing default tune\n");
-			strncpy(cltune,"moon.wav",sizeof(cltune));
-        } else{
-			strncpy(cltune,argv[optind],sizeof(cltune));
-			printf("tune argument = %s\n", argv[optind]);
-		}
 	}
-	
- 	printf("clflag24H:%d ,clvolume:%d ,cltune:%s \n",clflag24H,clvolume,cltune);
+	if (optind >= argc) {
+		fprintf(stderr, "playing default tune\n");
+		strncpy(cltune,"moon.wav",sizeof(cltune));
+	} else{
+		strncpy(cltune,argv[optind],sizeof(cltune));
+		printf("tune argument = %s\n", argv[optind]);
+	}
  	
-	//--------------------------------
-	//----- CREATE SHARED MEMORY -----
-	//--------------------------------
+	//Key parameters stored in shared memory so other programs can access
 	printf("Creating shared memory...\n");
 	shared_memory1_id = shmget((key_t)2417, sizeof(struct shared_memory1_struct), 0666 | IPC_CREAT);		//<<<<< SET THE SHARED MEMORY KEY    (Shared memory key , Size in bytes, Permission flags)
 	//	Shared memory key
@@ -124,31 +117,45 @@ int main(int argc, char** argv)
 	//Assign the shared_memory segment
 	shared_memory1 = (struct shared_memory1_struct *)shared_memory1_pointer;
 
-	//Init Shared Memory
-	shared_memory1->bExit=0;
-	shared_memory1->iMode = 1;
- 	shared_memory1->b24Hformat = clflag24H;
- 	if(clihiddenalarm > 0 && clihiddenalarm < 2400){
-		sprintf(shared_memory1->hiddenalarm,"%04d",clihiddenalarm);
+	//Init data in Shared Memory
+
+ 	if(hfnd && clihiddenalarm > 0 && clihiddenalarm < 2400){  //hiddenalarm found, set value
+		snprintf(shared_memory1->hiddenalarm,sizeof(shared_memory1->hiddenalarm),"%04d",clihiddenalarm);
 	} else {
-		strncpy(shared_memory1->hiddenalarm,"",sizeof(shared_memory1->hiddenalarm) );
+		strncpy(shared_memory1->hiddenalarm,"-1",sizeof(shared_memory1->hiddenalarm) );
 	}
- 	
+ 	if (vfnd && clvolume > -6000 && clvolume <= 0) {  //set volume to reasonable value  (-6000 - 0)
+		shared_memory1->volume=clvolume;
+	}else{
+		shared_memory1->volume=-2000;
+	}	
+	if (ffnd) {  //set hour format
+		if(clflag24H == 24){
+			shared_memory1->b24Hformat=true;
+		} else {
+			shared_memory1->b24Hformat=false;
+		}
+	} else {
+		shared_memory1->b24Hformat=false;
+	}	
  	if (strlen(cltune) == 0) {
 		strncpy(cltune,"moon.wav",sizeof(cltune));
 	}
- 	strncpy(shared_memory1->tune,cltune,sizeof(cltune));
- 	
- 	if (tfnd) {
-			shared_memory1->volume=clvolume;
-		}else{
-			shared_memory1->volume=-2000;
-		}	
- 	shared_memory1->bExit = false;
 	strncpy(shared_memory1->tune,cltune,sizeof(shared_memory1->tune));
 
+	shared_memory1->bExit = false;
+	shared_memory1->iMode = 1;
+	//this is the main loop.  Program loops based on iMode value, which specifies state
+	//1 = alarm disarmed. wait for alarm to be turned on
+	//2 = alarm armed, wait for either alarm time to be reached
+	//3 = in alarm for thumbwheel switch alarm, continue till alarm disarmed by switch
+	//4 = wait till alarm time has passed
+	//5 = illegal alarm time set - show on display
+	//6 = same as 3 for hidden alarm
+	//when in alarm, sound is played over and over.
+	
 	while(!shared_memory1->bExit ){ //forever, till someone stops us
-		AmbientLight = (ReadLight()+ReadLight()+ReadLight())/3;
+		AmbientLight = (ReadLightIntensity()+ReadLightIntensity()+ReadLightIntensity())/3;
 		//printf("%ld\n",AmbientLight);
 		if( AmbientLight> 30000){
 			iBrightness = 1;
@@ -160,7 +167,7 @@ int main(int argc, char** argv)
 			iBrightness = 10;
 		} else iBrightness = 15;
 		
-		switch(shared_memory1->iMode){
+		switch(shared_memory1->iMode){  //state machine to implement states 1-6
 			
 			case 1:  //display time; alarm not armed
 				io.digitalWrite(15,true);  //armed light off
@@ -189,7 +196,7 @@ int main(int argc, char** argv)
 					if(ChildPID==0)
 					{
 						//I am the child - play and exit
-						sprintf(command,"%d",shared_memory1->volume);
+						snprintf(command,sizeof(command),"%d",shared_memory1->volume);
 						strncpy(tunefullpath,sounddir,sizeof(tunefullpath));
 						strncat(tunefullpath,shared_memory1->tune,sizeof(tunefullpath));
 						execlp("/usr/bin/omxplayer", " ","--vol",command,tunefullpath, NULL);		//Execute file: file, arguments (1 or more strings followed by NULL)
@@ -217,7 +224,7 @@ int main(int argc, char** argv)
 			}	
 			break;
 			
-			case 4:  //ack alarm
+			case 4:  //ack alarm, wait for time to pass
 				if(ChildPID != 0){
 					system("killall omxplayer.bin");
 					ChildPID = 0;
@@ -237,21 +244,21 @@ int main(int argc, char** argv)
 				shared_memory1->thumb = ReadThumbwheel(io,shared_memory1->thumbdigits);
 				if (shared_memory1->thumb >= 2400){
 					io.digitalWrite(15,true);  //armed light off
-					strcpy(tmp,"bad ");
+					strncpy(tmp,"bad ",sizeof(tmp));
 					ShowMsg(tmp);
 				} else {
 					shared_memory1->iMode = 1;
 				}
 			break;	
 			
-			case 6:  //hidden alarm on 
+			case 6:  //hidden alarm time reached.
 				ShowTime(shared_memory1->digits,iBrightness,1);
 				if(ChildPID==0){
 					ChildPID=fork();
 					if(ChildPID==0)
 					{
 						//I am the child - play and exit
-						sprintf(command,"%d",shared_memory1->volume);
+						snprintf(command,sizeof(command),"%d",shared_memory1->volume);
 						strncpy(tunefullpath,sounddir,sizeof(tunefullpath));
 						strncat(tunefullpath,shared_memory1->tune,sizeof(tunefullpath));
 						execlp("/usr/bin/omxplayer", " ","--vol",command,tunefullpath, NULL);		//Execute file: file, arguments (1 or more strings followed by NULL)
@@ -287,7 +294,7 @@ int main(int argc, char** argv)
 		usleep(100000l);
 	}  //end of while !bExit 
 	printf("Exiting AlarmClock program\n");
-	strcpy(tmp,"Off ");
+	strncpy(tmp,"Off ",sizeof(tmp));
 	ShowMsg(tmp);
 	usleep(100000l);
 	//--------------------------------
@@ -385,6 +392,7 @@ int ReadThumbwheel(SX1509 io, char thumbdigits[])
 	sprintf(thumbdigits,"%04d",thumb);  
 	return thumb;
 }
+
 int ShowMsg(char Msg[])
 {
 	//display 4 char Msg on LED display
@@ -425,7 +433,7 @@ int ShowMsg(char Msg[])
 	return 0;
 }
 
-long ReadLight()
+long ReadLightIntensity()
 {
 	long LightCount = 0;
 	pinMode(0,OUTPUT);
@@ -438,6 +446,5 @@ long ReadLight()
 	}
 	pinMode(0,OUTPUT);
 	digitalWrite(0,0);
-//	printf("%ld\n",LightCount);
 	return(LightCount);
 }

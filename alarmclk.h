@@ -14,4 +14,4 @@ struct shared_memory1_struct *shared_memory1;
 int shared_memory1_id;
 int ShowTime(char s[],int iBrightness, int iBlinkSpd);
 int ShowMsg(char[]);
-long ReadLight(void);
+long ReadLightIntensity(void);
