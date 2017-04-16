@@ -8,5 +8,6 @@ struct shared_memory1_struct {
 	int volume;  //sound volume millibells -6000 to 0
 	unsigned char b24Hformat;
 	unsigned char bExit;
+	unsigned char bAlarmStatus;  //state of alarm switch
 	char tune[80]; 
 	};

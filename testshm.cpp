@@ -18,38 +18,38 @@ int shared_memory1_id;
 
 int main(int argc, char** argv)
 {
-	//parse command line args
 
  	//parse command line args
-    while ((opt = getopt(argc, argv, "f:v:h:e")) != -1) {
+    while ((opt = getopt(argc, argv, "f:v:h:eq")) != -1) {
         switch (opt) {
-        case 'f':  //24H format if flag found
-            clflag24H = atoi(optarg);
-            if (clflag24H != 12)clflag24H = 24;
-            ffnd = 1;
-            break;
-        case 'v': //volume -6000 to 0
-            clvolume = atoi(optarg);
-            vfnd = 1;
-            break;
-       case 'h': //hidden alarm time 0600 for example
-            clihiddenalarm = atoi(optarg);
+		case 'f':  //24H format if flag found
+			clflag24H = atoi(optarg);
+			if (clflag24H != 12)clflag24H = 24;
+			ffnd = 1;
+			break;
+		case 'v': //volume -6000 to 0
+			clvolume = atoi(optarg);
+			vfnd = 1;
+			break;
+		case 'h': //hidden alarm time 0600 for example
+			clihiddenalarm = atoi(optarg);
 			hfnd = 1;
-            break;            
-       case 'e':
+			break;            
+		case 'e':
 			clExitflg = 1;
 			break;
-       default: /* '?' */
+		case 'q':
+			clqflg = 1;
+			break;
+		default: /* '?' */
 			fprintf(stderr, "Usage: [-h nnnn] [-f12/24] [-v -nnn] [-e] [tune]\n");
-            exit(EXIT_FAILURE);
+			exit(EXIT_FAILURE);
 		}
 	}
 	if (optind >= argc) {
-		fprintf(stderr, "playing default tune\n");
 		strncpy(cltune,"moon.wav",sizeof(cltune));
 	} else{
 		strncpy(cltune,argv[optind],sizeof(cltune));
-		printf("tune argument = %s\n", argv[optind]);
 	}
 	
 //	printf("24Hformat=%d; volume = %d; clExitflg=%d; hiddenalarm=%d; optind=%d\n", clflag24H, clvolume, clExitflg, clihiddenalarm, optind);
@@ -76,6 +76,16 @@ int main(int argc, char** argv)
 	//printf("Shared memory attached at %X\n", (int)shared_memory1_pointer);
 	shared_memory1 = (struct shared_memory1_struct *)shared_memory1_pointer;
 
+	if (clqflg){  //query and exit response
+		printf("%s,",shared_memory1->digits);  
+		printf("%s,",shared_memory1->thumbdigits);  
+		printf("%s,",shared_memory1->hiddenalarm);  	
+		printf("%d,",shared_memory1->volume);  
+		printf("%d,",shared_memory1->b24Hformat); 
+		printf("%s,",shared_memory1->tune);
+		printf("%d",shared_memory1->bAlarmStatus);  
+		exit(0);
+	}
 	
  	if(hfnd && clihiddenalarm > 0 && clihiddenalarm < 2400){  //hiddenalarm found, set value
 		snprintf(shared_memory1->hiddenalarm,sizeof(shared_memory1->hiddenalarm),"%04d",clihiddenalarm);

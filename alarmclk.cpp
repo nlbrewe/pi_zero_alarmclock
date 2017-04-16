@@ -167,6 +167,7 @@ int main(int argc, char** argv)
 			iBrightness = 10;
 		} else iBrightness = 15;
 		
+		shared_memory1->bAlarmStatus = !io.digitalRead(14);
 		switch(shared_memory1->iMode){  //state machine to implement states 1-6
 			
 			case 1:  //display time; alarm not armed
