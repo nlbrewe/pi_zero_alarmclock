@@ -20,7 +20,7 @@ int main(int argc, char** argv)
 {
 
  	//parse command line args
-    while ((opt = getopt(argc, argv, "f:v:h:eq")) != -1) {
+    while ((opt = getopt(argc, argv, "f:v:h:eqt:p")) != -1) {
         switch (opt) {
 		case 'f':  //24H format if flag found
 			clflag24H = atoi(optarg);
@@ -34,25 +34,43 @@ int main(int argc, char** argv)
 		case 'h': //hidden alarm time 0600 for example
 			clihiddenalarm = atoi(optarg);
 			hfnd = 1;
-			break;            
-		case 'e':
+			break;   
+		case 'e':  //exit
 			clExitflg = 1;
-			break;
-		case 'q':
+			break;        
+		case 'q':  //simple query
 			clqflg = 1;
+			break; 
+		case 't': //testduration in seconds
+            strncpy(clsndtest,optarg,sizeof(clsndtest));
+			tfnd = 1;
+            break;            	
+		case 'p':  //progressive
+			clprogflg = 1;
 			break;
 		default: /* '?' */
 			fprintf(stderr, "Usage: [-h nnnn] [-f12/24] [-v -nnn] [-e] [tune]\n");
 			exit(EXIT_FAILURE);
 		}
 	}
-	if (optind >= argc) {
-		strncpy(cltune,"moon.wav",sizeof(cltune));
-	} else{
+	//printf("optind,argc %d,%d\n",optind,argc);
+	if (optind < argc) {
 		strncpy(cltune,argv[optind],sizeof(cltune));
 	}
-	
-//	printf("24Hformat=%d; volume = %d; clExitflg=%d; hiddenalarm=%d; optind=%d\n", clflag24H, clvolume, clExitflg, clihiddenalarm, optind);
+/*	
+	printf("clflag24H=%d\n",clflag24H);
+	printf("clvolume=%d\n",clvolume);
+	printf("cltune=%s\n",cltune);
+	printf("clihiddenalarm=%d\n",clihiddenalarm);
+	printf("clExitflg=%d\n",clExitflg);
+	printf("clqflg=%d\n",clqflg);
+	printf("clprogflg=%d\n",clprogflg);
+	printf("clsndtest=%s\n",clsndtest);
+	printf("vfnd=%d\n",vfnd);
+	printf("hfnd=%d\n",hfnd);
+	printf("ffnd=%d\n",ffnd);
+	printf("tfnd=%d\n",tfnd);
+*/	
 
 	//--------------------------------
 	//----- CREATE SHARED MEMORY -----
@@ -100,10 +118,20 @@ int main(int argc, char** argv)
 			shared_memory1->b24Hformat=false;
 		}
 	} 
+	if(tfnd){
+		strncpy(shared_memory1->sndtest,clsndtest,sizeof(shared_memory1->sndtest));
+	} 
+
+	if(clprogflg == 1){
+		shared_memory1->progressive = 1;
+	} 
+
  	if (strlen(cltune) > 0) {
 		strncpy(shared_memory1->tune,cltune,sizeof(shared_memory1->tune));
 	}
+	
 	shared_memory1->bExit=clExitflg;
+	
 	printf("current time: %s\n",shared_memory1->digits);  
 	printf("alarm on thumbwheel set to: %s\n",shared_memory1->thumbdigits);  
 	printf("hiddenalarm: %s\n",shared_memory1->hiddenalarm);  	
@@ -111,11 +139,9 @@ int main(int argc, char** argv)
 	printf("volume: %d\n",shared_memory1->volume);  
 	printf("24hr format: %d\n",shared_memory1->b24Hformat); 
 	printf("Exit flag: %d\n",shared_memory1->bExit); 
-	if(strlen(shared_memory1->tune)>0){
-		printf("Alarm sound file: %s\n",shared_memory1->tune); 
-	}else {
-		printf("Alarm sound file not defined\n"); 
-	}
+	printf("Progressive flag: %d\n",shared_memory1->progressive); 
+	printf("Soundtest flag: %s\n",shared_memory1->sndtest); 
+	printf("Alarm sound file: %s\n",shared_memory1->tune); 
 	
 	//--------------------------------
 	//----- DETACH SHARED MEMORY -----

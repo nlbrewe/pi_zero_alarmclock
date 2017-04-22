@@ -6,6 +6,8 @@ struct shared_memory1_struct {
 	int thumb;  //integer thumbwheel switch value
 	int iMode;
 	int volume;  //sound volume millibells -6000 to 0
+	char sndtest[10];
+	int progressive;  //sound volume should increase with time
 	unsigned char b24Hformat;
 	unsigned char bExit;
 	unsigned char bAlarmStatus;  //state of alarm switch

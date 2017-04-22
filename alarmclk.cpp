@@ -28,6 +28,8 @@ int iBrightness = 15;  //brightness of LED
 int ChildPID;  //PID of sound playing app
 int status;  //used in waitPID call
 bool bToggle = false;
+int iWorkingVolume;
+int iStartVolume = -6000;
 long AmbientLight;
 pid_t result;
 char tmp[5];  //compose message for LED
@@ -52,7 +54,9 @@ int main(int argc, char** argv)
  	io.pinMode(15, OUTPUT);  //alarm armed LED
  	
 	//parse command line args
-    while ((opt = getopt(argc, argv, "f:v:h:e")) != -1) {
+	clprogflg = 0;
+	clExitflg = 0;
+    while ((opt = getopt(argc, argv, "f:v:h:et:p")) != -1) {
         switch (opt) {
         case 'f':  //24H format if flag found
             clflag24H = atoi(optarg);
@@ -66,9 +70,16 @@ int main(int argc, char** argv)
        case 'h': //hidden alarm time 0600 for example
             clihiddenalarm = atoi(optarg);
 			hfnd = 1;
-            break;            
+            break;                  
+       case 't': //test sound (play/stop)
+            strncpy(clsndtest,optarg,sizeof(clsndtest));
+			tfnd = 1;
+            break;            	
        case 'e':  //for consistency with testshm
 			clExitflg = 1;
+			break;
+		case 'p':  //for consistency with testshm
+			clprogflg = 1;
 			break;
         default: /* '?' */
             fprintf(stderr, "Usage: [-h nnnn] [-f12/24] [-v -nnn] [-e] [tune]\n");
@@ -122,13 +133,18 @@ int main(int argc, char** argv)
  	if(hfnd && clihiddenalarm > 0 && clihiddenalarm < 2400){  //hiddenalarm found, set value
 		snprintf(shared_memory1->hiddenalarm,sizeof(shared_memory1->hiddenalarm),"%04d",clihiddenalarm);
 	} else {
-		strncpy(shared_memory1->hiddenalarm,"-1",sizeof(shared_memory1->hiddenalarm) );
+		strncpy(shared_memory1->hiddenalarm,"0600",sizeof(shared_memory1->hiddenalarm) );
 	}
- 	if (vfnd && clvolume > -6000 && clvolume <= 0) {  //set volume to reasonable value  (-6000 - 0)
+ 	if (vfnd && clvolume >= -6000 && clvolume <= 0) {  //set volume to reasonable value  (-6000 - 0)
 		shared_memory1->volume=clvolume;
 	}else{
 		shared_memory1->volume=-2000;
 	}	
+	if(tfnd){
+		strncpy(shared_memory1->sndtest,clsndtest,4);
+	} else { 
+		strncpy(shared_memory1->sndtest,"stop",4);
+	}
 	if (ffnd) {  //set hour format
 		if(clflag24H == 24){
 			shared_memory1->b24Hformat=true;
@@ -138,6 +154,12 @@ int main(int argc, char** argv)
 	} else {
 		shared_memory1->b24Hformat=false;
 	}	
+	if(clprogflg){
+		shared_memory1->progressive = 1;
+	} else {
+		shared_memory1->progressive = 0;
+	}
+	
  	if (strlen(cltune) == 0) {
 		strncpy(cltune,"moon.wav",sizeof(cltune));
 	}
@@ -184,6 +206,11 @@ int main(int argc, char** argv)
 				if(io.digitalRead(14)) shared_memory1->iMode = 1;
 				ShowTime(shared_memory1->digits,iBrightness,0);
 				io.digitalWrite(15,false);  //active low	
+				if(strncmp(shared_memory1->sndtest,"play",4) == 0){
+					shared_memory1->iMode = 7;  //test sound
+					strncpy(shared_memory1->sndtest,"----",4);
+				}
+				iWorkingVolume = iStartVolume;  //volume if progressive selected;
 				if(strncmp(shared_memory1->digits,shared_memory1->thumbdigits,4)==0) shared_memory1->iMode = 3;
 				if(strlen(shared_memory1->hiddenalarm)> 0 && strncmp(shared_memory1->digits,shared_memory1->hiddenalarm,4)==0){
 					 shared_memory1->iMode = 6;  //constant hidden alarm hit
@@ -192,12 +219,19 @@ int main(int argc, char** argv)
 			
 			case 3:	 //sound alarm 
 				ShowTime(shared_memory1->digits,iBrightness,1);
-				if(ChildPID==0){
+				if(ChildPID==0){  //no omxplayer forked yet
+					if(shared_memory1->progressive != 0){
+						iWorkingVolume += 1000; //start at low volume
+						if(iWorkingVolume >  shared_memory1->volume)iWorkingVolume = shared_memory1->volume;
+					} else {
+						iWorkingVolume = shared_memory1->volume;  // start at selected volume
+					}
+					printf("working volume = %d/n",iWorkingVolume);
 					ChildPID=fork();
 					if(ChildPID==0)
 					{
 						//I am the child - play and exit
-						snprintf(command,sizeof(command),"%d",shared_memory1->volume);
+						snprintf(command,sizeof(command),"%d",iWorkingVolume);
 						strncpy(tunefullpath,sounddir,sizeof(tunefullpath));
 						strncat(tunefullpath,shared_memory1->tune,sizeof(tunefullpath));
 						execlp("/usr/bin/omxplayer", " ","--vol",command,tunefullpath, NULL);		//Execute file: file, arguments (1 or more strings followed by NULL)
@@ -254,6 +288,48 @@ int main(int argc, char** argv)
 			
 			case 6:  //hidden alarm time reached.
 				ShowTime(shared_memory1->digits,iBrightness,1);
+				if(ChildPID==0){  //omxplayer not forked yet
+					if(shared_memory1->progressive != 0){
+						iWorkingVolume += 1000; //start at low volume
+						if(iWorkingVolume >  shared_memory1->volume)iWorkingVolume = shared_memory1->volume;
+					} else {
+						iWorkingVolume = shared_memory1->volume;  // start at selected volume
+					}
+					printf("working volume = %d/n",iWorkingVolume);
+					ChildPID=fork();
+					if(ChildPID==0)
+					{
+						//I am the child - play and exit
+						snprintf(command,sizeof(command),"%d",iWorkingVolume);
+						strncpy(tunefullpath,sounddir,sizeof(tunefullpath));
+						strncat(tunefullpath,shared_memory1->tune,sizeof(tunefullpath));
+						execlp("/usr/bin/omxplayer", " ","--vol",command,tunefullpath, NULL);		//Execute file: file, arguments (1 or more strings followed by NULL)
+						_exit(0);
+					}
+					else
+					{
+						//I am the parent, keep looping
+					} 
+				}	
+				if(ChildPID != 0){
+				result = waitpid(ChildPID, &status, WNOHANG);
+				if (result == 0) {
+					//child still alive
+				} else if (result == -1) {
+					// error
+					printf("Child process running omxplayer error from waitpid\n");
+					ChildPID = 0;
+				} else {
+					//child exited
+					ChildPID = 0;
+					printf("Child process running omxplayer exited\n");
+				}
+				if(io.digitalRead(14)) shared_memory1->iMode = 4;  //alarm acknowledged
+			}	
+			break; 
+			
+			case 7:	 //play sound
+				ShowTime(shared_memory1->digits,iBrightness,1);
 				if(ChildPID==0){
 					ChildPID=fork();
 					if(ChildPID==0)
@@ -283,10 +359,13 @@ int main(int argc, char** argv)
 					ChildPID = 0;
 					printf("Child process running omxplayer exited\n");
 				}
-				if(io.digitalRead(14)) shared_memory1->iMode = 4;  //alarm acknowledged
+				if(io.digitalRead(14) || strncmp(shared_memory1->sndtest,"stop",4) == 0) {
+					shared_memory1->iMode = 4;  //alarm acknowledged
+					strncpy(shared_memory1->sndtest,"----",4);  //played!
+				}
 			}	
-			break; 
-			
+			break;
+				
 			default:
 				printf("default iMode\n");
 				shared_memory1->iMode = 1;
